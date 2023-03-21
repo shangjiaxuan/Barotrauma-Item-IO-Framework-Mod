@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<infotexts language="English" nowhitespace="false" translatedname="English">
+  <entityname.ItemBox>Item Box</entityname.ItemBox>
+  <entitydescription.ItemBox>Stack your stackable items in one entity.</entitydescription.ItemBox>
+</infotexts>

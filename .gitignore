@@ -1,0 +1,4 @@
+*.dll
+CSharp/.vs
+CSharp/bin
+CSharp/obj
