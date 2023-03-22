@@ -57,7 +57,13 @@ namespace BaroMod_sjx
 			{
 				if (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? component))
 				{
-					__state = __instance;
+					if (__instance.AllowSwappingContainedItems) {
+						DebugConsole.LogError($"ItemContainer of {(__instance.Owner as Item)!.Prefab.Identifier} with ConditionStorage must have AllowSwappingContainedItems=\"false\"!");
+						__state = null;
+					}
+					else {
+						__state = __instance;
+					}
 				}
 				else {
 					__state = null;
@@ -127,7 +133,15 @@ namespace BaroMod_sjx
 			{
 				if ((item.ParentInventory != null) && (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? comp)))
 				{
-					__state = new context(__instance, item.Condition, item.Quality, item.Prefab, (comp as ConditionStorage)!);
+					if (__instance.AllowSwappingContainedItems)
+					{
+						DebugConsole.LogError($"ItemContainer of {(__instance.Owner as Item)!.Prefab.Identifier} with ConditionStorage must have AllowSwappingContainedItems=\"false\"!");
+						__state = null;
+					}
+					else
+					{
+						__state = new context(__instance, item.Condition, item.Quality, item.Prefab, (comp as ConditionStorage)!);
+					}
 				}
 				else {
 					__state = null;
