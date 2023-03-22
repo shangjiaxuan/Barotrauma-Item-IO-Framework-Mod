@@ -2,17 +2,23 @@
 using HarmonyLib;
 using System.Reflection;
 using System.Linq;
+using Barotrauma.Items.Components;
+using System.Collections.Generic;
+using System;
+using Microsoft.Xna.Framework;
+using System.ComponentModel;
 
-namespace ZRG27314
+namespace BaroMod_sjx
 {
-	class ItemBoxImpl : ACsMod
+	partial class ItemBoxImpl : ACsMod
 	{
 		const string harmony_id = "com.sjx.ItemBox";
+		/*
 		const string box_identifier = "ItemBox";
 		const float max_condition = 1.0f;
 		const int item_count = 1024;
 		const float increment = max_condition / item_count;
-
+		*/
 		private readonly Harmony harmony;
 
 		public ItemBoxImpl() {
@@ -35,6 +41,10 @@ namespace ZRG27314
 			}
 		}
 
+		static Dictionary<Type, ItemComponent> get_componentsByType(Item item) {
+			return (AccessTools.Field(typeof(Item),"componentsByType").GetValue(item)! as Dictionary<Type, ItemComponent>)!;
+		}
+
 		[HarmonyPatch(typeof(Inventory))]
 		class Patch_PutItem
 		{
@@ -43,21 +53,39 @@ namespace ZRG27314
 				Barotrauma.DebugConsole.AddWarning("Patch_PutItem TargetMethod");
 				return AccessTools.Method(typeof(Inventory), "PutItem");
 			}
-			public static bool Prefix(Inventory __instance, out Inventory __state)
+			public static bool Prefix(Inventory __instance, out Inventory? __state, int i)
 			{
-				__state = __instance;
+				if (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? component))
+				{
+					__state = __instance;
+				}
+				else {
+					__state = null;
+				}
 				return true;
 			}
-			public static void Postfix(Inventory __state)
+			public static void Postfix(Inventory? __state)
 			{
-				if (__state.Owner is Item parentItem && parentItem.Prefab.Identifier == box_identifier)
+				if (__state != null)
 				{
-					if (!parentItem.IsFullCondition && __state.AllItems.Any())
-					{
+					ConditionStorage storage_info = (get_componentsByType((__state.Owner as Item)!)[typeof(ConditionStorage)]! as ConditionStorage)!;
 
-						int preserve = SlotPreserveCount(__state.AllItems.First().Prefab);
-						var it = __state.AllItemsMod.GetEnumerator();
-						while (it.MoveNext() && !parentItem.IsFullCondition)
+					Inventory.ItemSlot target_slot;
+					{
+						Inventory.ItemSlot[] slots = (AccessTools.Field(typeof(Inventory), "slots").GetValue(__state)! as Inventory.ItemSlot[])!;
+						if (storage_info.slotIndex >= slots.Length) {
+							DebugConsole.LogError($"ConditionStorage of {(__state.Owner as Item)!.Prefab.Identifier} specified index {storage_info.slotIndex} out of {slots.Length}!");
+							return;
+						}
+						target_slot = slots[storage_info.slotIndex];
+					}
+
+					if (!storage_info.isFull() && target_slot.Items.Any())
+					{
+						
+						int preserve = SlotPreserveCount(target_slot.Items.First().Prefab);
+						var it = target_slot.Items.ToArray().AsEnumerable().GetEnumerator();
+						while (it.MoveNext() && !storage_info.isFull())
 						{
 							if (preserve > 0)
 							{
@@ -65,8 +93,7 @@ namespace ZRG27314
 							}
 							else
 							{
-								parentItem.Condition += increment;
-								// patched RemoveItem will be able to distinguish
+								storage_info.currentItemCount++;
 								it.Current.ParentInventory = null;
 								__state.RemoveItem(it.Current);
 								Entity.Spawner.AddItemToRemoveQueue(it.Current);
@@ -83,39 +110,112 @@ namespace ZRG27314
 			public class context
 			{
 				public Inventory inventory;
-				public bool do_dump;
-				public float? condition;
-				public int? quality;
+				public float condition;
+				public int quality;
 				public ItemPrefab prefab;
-				public context(Inventory inv, Item it)
+				public ConditionStorage info;
+				public context(Inventory inv, float cond, int q, ItemPrefab p, ConditionStorage sto)
 				{
 					inventory = inv;
-					// patched putItem use this to say "Just despawned"
-					do_dump = it.ParentInventory != null;
-					condition = it.Condition;
-					quality = it.Quality;
-					prefab = it.Prefab;
+					condition = cond;
+					quality = q;
+					prefab = p;
+					info = sto;
 				}
 			};
-			public static bool Prefix(Inventory __instance, out context __state, Item item)
+			public static bool Prefix(Inventory __instance, out context? __state, Item item)
 			{
-				__state = new context(__instance, item);
+				if ((item.ParentInventory != null) && (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? comp)))
+				{
+					__state = new context(__instance, item.Condition, item.Quality, item.Prefab, (comp as ConditionStorage)!);
+				}
+				else {
+					__state = null;
+				}
 				return true;
 			}
-			public static void Postfix(context __state)
+			public static void Postfix(context? __state)
 			{
-				if (__state.do_dump && __state.inventory.Owner is Item parentItem && parentItem.Prefab.Identifier == box_identifier)
+				if (__state != null)
 				{
+					ConditionStorage storage_info = __state.info;
+
+					Inventory.ItemSlot target_slot;
+					{
+						Inventory.ItemSlot[] slots = (AccessTools.Field(typeof(Inventory), "slots").GetValue(__state.inventory)! as Inventory.ItemSlot[])!;
+						if (storage_info.slotIndex >= slots.Length)
+						{
+							DebugConsole.LogError($"ConditionStorage of {(__state.inventory.Owner as Item)!.Prefab.Identifier} specified index {storage_info.slotIndex} out of {slots.Length}!");
+							return;
+						}
+						target_slot = slots[storage_info.slotIndex];
+					}
 					int preserve = SlotPreserveCount(__state.prefab);
-					int spawn_count = preserve - __state.inventory.AllItems.Count();
-					while (parentItem.Condition >= increment && spawn_count > 0)
+					int spawn_count = preserve - target_slot.Items.Count;
+					while (!storage_info.isEmpty() && spawn_count > 0)
 					{
 						spawn_count--;
-						parentItem.Condition -= increment;
+						storage_info.currentItemCount--;
 						Item.Spawner.AddItemToSpawnQueue(__state.prefab, __state.inventory, __state.condition, __state.quality, spawnIfInventoryFull: false);
 					}
 				}
 			}
+		}
+
+		[HarmonyPatch(typeof(Inventory), nameof(Inventory.CreateNetworkEvent))]
+		class Patch_CreateNetworkEvent
+		{
+			public static bool Prefix(Inventory __instance, out Inventory? __state) {
+				if (GameMain.NetworkMember != null && 
+					__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? comp))
+				{
+					__state = __instance;
+				}
+				else {
+					__state = null;
+				}
+				return true;
+			}
+
+			public static void Postfix(Inventory? __state)
+			{
+				if (__state != null) {
+					Item parentItem = (__state.Owner as Item)!;
+					ConditionStorage storage = parentItem.GetComponent<ConditionStorage>();
+					GameMain.NetworkMember.CreateEntityEvent(__state.Owner as Item, new Item.ChangePropertyEventData(storage.SerializableProperties["currentItemCount"], storage));
+				}
+			}
+		}
+	}
+
+	class ConditionStorage : ItemComponent {
+
+		[Serialize(0, IsPropertySaveable.No, description: "Index of the stacking slot in same item's ItemContainer component")]
+		public int slotIndex { get; private set; }
+		[Serialize(1024, IsPropertySaveable.No, description: "Maximum number of items stacked within")]
+		public int maxItemCount { get; private set; }
+
+		[Serialize(0.6f, IsPropertySaveable.No, description: "icon scale compared to full")]
+		public float iconScale { get; private set; }
+
+		[Serialize(0.0f, IsPropertySaveable.No, description: "shift x of icon")]
+		public float iconShiftX { get; private set; }
+
+		[Serialize(0.1f, IsPropertySaveable.No, description: "shift y of icon, down is positive")]
+		public float iconShiftY { get; private set; }
+
+		[Editable(minValue:0, maxValue: int.MaxValue), Serialize(0, IsPropertySaveable.Yes, description: "Current item count")]
+		public int currentItemCount { get; set; }
+
+		public ConditionStorage(Item item, ContentXElement element) : base(item, element){}
+
+		public bool isFull() {
+			
+			return currentItemCount >= maxItemCount;
+		}
+
+		public bool isEmpty() {
+			return currentItemCount <= 0;
 		}
 	}
 	/*
