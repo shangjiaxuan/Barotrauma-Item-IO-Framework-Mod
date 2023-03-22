@@ -12,7 +12,7 @@ namespace BaroMod_sjx
 {
 	partial class ItemBoxImpl : ACsMod
 	{
-		const string harmony_id = "com.sjx.ItemBox";
+		const string harmony_id = "com.sjx.ItemIOFramework";
 		/*
 		const string box_identifier = "ItemBox";
 		const float max_condition = 1.0f;
@@ -31,13 +31,14 @@ namespace BaroMod_sjx
 			harmony.UnpatchAll(harmony_id);
 		}
 
-		public static int SlotPreserveCount(ItemPrefab prefab) {
-			if (prefab.MaxStackSize == 1)
+		public static int SlotPreserveCount(ItemPrefab prefab, ItemContainer container, int slot_index) {
+			int resolved_stack_size = Math.Min(Math.Min(prefab.MaxStackSize, container.GetMaxStackSize(slot_index)), Inventory.MaxStackSize);
+			if (resolved_stack_size <= 1)
 			{
 				return 1;
 			}
 			else {
-				return prefab.MaxStackSize - 1;
+				return resolved_stack_size - 1;
 			}
 		}
 
@@ -53,6 +54,7 @@ namespace BaroMod_sjx
 				Barotrauma.DebugConsole.AddWarning("Patch_PutItem TargetMethod");
 				return AccessTools.Method(typeof(Inventory), "PutItem");
 			}
+
 			public static bool Prefix(Inventory __instance, out Inventory? __state, int i)
 			{
 				if (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? component))
@@ -74,13 +76,14 @@ namespace BaroMod_sjx
 			{
 				if (__state != null)
 				{
-					ConditionStorage storage_info = (get_componentsByType((__state.Owner as Item)!)[typeof(ConditionStorage)]! as ConditionStorage)!;
-
+					Item parentItem = (__state.Owner as Item)!;
+					ConditionStorage storage_info = parentItem.GetComponent<ConditionStorage>();
+					ItemContainer container = parentItem.GetComponent<ItemContainer>();
 					Inventory.ItemSlot target_slot;
 					{
 						Inventory.ItemSlot[] slots = (AccessTools.Field(typeof(Inventory), "slots").GetValue(__state)! as Inventory.ItemSlot[])!;
 						if (storage_info.slotIndex >= slots.Length) {
-							DebugConsole.LogError($"ConditionStorage of {(__state.Owner as Item)!.Prefab.Identifier} specified index {storage_info.slotIndex} out of {slots.Length}!");
+							DebugConsole.LogError($"ConditionStorage of {parentItem.Prefab.Identifier} specified index {storage_info.slotIndex} out of {slots.Length}!");
 							return;
 						}
 						target_slot = slots[storage_info.slotIndex];
@@ -88,8 +91,8 @@ namespace BaroMod_sjx
 
 					if (!storage_info.isFull() && target_slot.Items.Any())
 					{
-						
-						int preserve = SlotPreserveCount(target_slot.Items.First().Prefab);
+						//bool edited = false;	
+						int preserve = SlotPreserveCount(target_slot.Items.First().Prefab, container, storage_info.slotIndex);
 						var it = target_slot.Items.ToArray().AsEnumerable().GetEnumerator();
 						while (it.MoveNext() && !storage_info.isFull())
 						{
@@ -99,6 +102,7 @@ namespace BaroMod_sjx
 							}
 							else
 							{
+								//edited = true;
 								storage_info.currentItemCount++;
 								it.Current.ParentInventory = null;
 								__state.RemoveItem(it.Current);
@@ -131,7 +135,8 @@ namespace BaroMod_sjx
 			};
 			public static bool Prefix(Inventory __instance, out context? __state, Item item)
 			{
-				if ((item.ParentInventory != null) && (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? comp)))
+				// do not add items if sub is unloading or if removed for overflow.
+				if ((item.ParentInventory != null) && !Submarine.Unloading  && (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? comp)))
 				{
 					if (__instance.AllowSwappingContainedItems)
 					{
@@ -153,7 +158,7 @@ namespace BaroMod_sjx
 				if (__state != null)
 				{
 					ConditionStorage storage_info = __state.info;
-
+					ItemContainer container = (__state.inventory.Owner as Item)!.GetComponent<ItemContainer>();
 					Inventory.ItemSlot target_slot;
 					{
 						Inventory.ItemSlot[] slots = (AccessTools.Field(typeof(Inventory), "slots").GetValue(__state.inventory)! as Inventory.ItemSlot[])!;
@@ -164,18 +169,26 @@ namespace BaroMod_sjx
 						}
 						target_slot = slots[storage_info.slotIndex];
 					}
-					int preserve = SlotPreserveCount(__state.prefab);
+					int preserve = SlotPreserveCount(__state.prefab, container, storage_info.slotIndex);
 					int spawn_count = preserve - target_slot.Items.Count;
+					bool edited = false;
 					while (!storage_info.isEmpty() && spawn_count > 0)
 					{
+						edited = true;
 						spawn_count--;
 						storage_info.currentItemCount--;
 						Item.Spawner.AddItemToSpawnQueue(__state.prefab, __state.inventory, __state.condition, __state.quality, spawnIfInventoryFull: false);
 					}
+
+					if (edited && GameMain.NetworkMember != null)
+					{
+						GameMain.NetworkMember.CreateEntityEvent(__state.inventory.Owner as Item,
+							new Item.ChangePropertyEventData(storage_info.SerializableProperties["currentItemCount"], storage_info));
+					}
 				}
 			}
 		}
-
+		
 		[HarmonyPatch(typeof(Inventory), nameof(Inventory.CreateNetworkEvent))]
 		class Patch_CreateNetworkEvent
 		{
@@ -201,7 +214,7 @@ namespace BaroMod_sjx
 			}
 		}
 	}
-
+	
 	class ConditionStorage : ItemComponent {
 
 		[Serialize(0, IsPropertySaveable.No, description: "Index of the stacking slot in same item's ItemContainer component")]
