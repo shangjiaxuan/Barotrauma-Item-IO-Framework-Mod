@@ -105,13 +105,14 @@ namespace BaroMod_sjx
 								{
 									preserve--;
 								}
-								else
-								{
-									//edited = true;
-									storage_info.currentItemCount++;
+								else {
+									// client cannot despawn items, single player needs to despawn
+									Entity.Spawner.AddItemToRemoveQueue(it.Current);
+									++storage_info.currentItemCount;
+									storage_info.SetSync();
 									it.Current.ParentInventory = null;
 									__state.RemoveItem(it.Current);
-									Entity.Spawner.AddItemToRemoveQueue(it.Current);
+									break;
 								}
 							}
 						}
@@ -139,8 +140,9 @@ namespace BaroMod_sjx
 					info = sto;
 				}
 			};
-			public static bool Prefix(Inventory __instance, out context? __state, Item item)
+			public static bool Prefix(Inventory __instance, out ConditionStorage? __state, Item item)
 			{
+
 				// do not add items if sub is unloading or if removed for overflow.
 				if ((item.ParentInventory != null) && !Submarine.Unloading  && (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? comp)))
 				{
@@ -151,44 +153,48 @@ namespace BaroMod_sjx
 					}
 					else
 					{
-						__state = new context(__instance, item.Condition, item.Quality, item.Prefab, (comp as ConditionStorage)!);
+						ConditionStorage storage_info = (comp as ConditionStorage)!;
+
+						storage_info.QualityStacked = item.Quality;
+						storage_info.ConditionStacked = item.Condition;
+						storage_info.item_type = item.Prefab;
+						__state = storage_info;
 					}
 				}
 				else {
 					__state = null;
 				}
+				if (item.ParentInventory is null) {
+					item.ParentInventory = __instance;
+				}
 				return true;
 			}
-			public static void Postfix(context? __state)
+			public static void Postfix(ConditionStorage? __state)
 			{
 				if (__state != null)
 				{
-					ConditionStorage storage_info = __state.info;
-					ItemContainer container = (__state.inventory.Owner as Item)!.GetComponent<ItemContainer>();
+					ConditionStorage storage_info = __state!;
+					ItemContainer container = (storage_info.parentInventory.Owner as Item)!.GetComponent<ItemContainer>();
 					Inventory.ItemSlot target_slot;
 					{
-						Inventory.ItemSlot[] slots = (AccessTools.Field(typeof(Inventory), "slots").GetValue(__state.inventory)! as Inventory.ItemSlot[])!;
+						Inventory.ItemSlot[] slots = (AccessTools.Field(typeof(Inventory), "slots").GetValue(storage_info.parentInventory)! as Inventory.ItemSlot[])!;
 						if (storage_info.slotIndex >= slots.Length)
 						{
-							DebugConsole.LogError($"ConditionStorage of {(__state.inventory.Owner as Item)!.Prefab.Identifier} specified index {storage_info.slotIndex} out of {slots.Length}!");
+							DebugConsole.LogError($"ConditionStorage of {(storage_info.parentInventory.Owner as Item)!.Prefab.Identifier} specified index {storage_info.slotIndex} out of {slots.Length}!");
 							return;
 						}
 						target_slot = slots[storage_info.slotIndex];
 					}
-					int preserve = SlotPreserveCount(__state.prefab, container, storage_info.slotIndex);
+					int preserve = SlotPreserveCount(storage_info.item_type!, container, storage_info.slotIndex);
 					int spawn_count = preserve - target_slot.Items.Count;
 					int can_spawn = Math.Min(spawn_count, storage_info.currentItemCount);
 
-					storage_info.QualityStacked = __state.quality;
-					storage_info.ConditionStacked = __state.condition;
-					storage_info.item_type = __state.prefab;
-					storage_info.IsActive = true;
-
 					// other may be queued, so spawn only one
 					if (can_spawn > 0) {
+						storage_info.SetSync();
 						--storage_info.currentItemCount;
 						Item.Spawner.AddItemToSpawnQueue(storage_info.item_type, storage_info.parentInventory,
-							storage_info.ConditionStacked, storage_info.QualityStacked, spawnIfInventoryFull: true);
+								storage_info.ConditionStacked, storage_info.QualityStacked, spawnIfInventoryFull: true);
 					}
 				}
 			}
@@ -214,7 +220,7 @@ namespace BaroMod_sjx
 				if (__state != null) {
 					Item parentItem = (__state.Owner as Item)!;
 					ConditionStorage storage = parentItem.GetComponent<ConditionStorage>();
-					GameMain.NetworkMember.CreateEntityEvent(__state.Owner as Item, new Item.ChangePropertyEventData(storage.SerializableProperties["currentItemCount"], storage));
+					storage.SyncItemCount();
 				}
 			}
 		}
@@ -282,17 +288,24 @@ namespace BaroMod_sjx
 			return currentItemCount >= maxItemCount;
 		}
 
+		public void SetSync() {
+			IsActive = true;
+		}
+
+		public void SyncItemCount() {
+			if (GameMain.NetworkMember != null && GameMain.NetworkMember.IsServer)
+			{
+				GameMain.NetworkMember.CreateEntityEvent(Item,
+					new Item.ChangePropertyEventData(SerializableProperties["currentItemCount"], this));
+			}
+		}
+
 		public override void Update(float deltaTime, Camera cam) {
 			base.Update(deltaTime, cam);
 
 			IsActive = false;
 
-			// update enitity property
-			if (GameMain.NetworkMember != null)
-			{
-				GameMain.NetworkMember.CreateEntityEvent(Item,
-					new Item.ChangePropertyEventData(SerializableProperties["currentItemCount"], this));
-			}
+			SyncItemCount();
 		}
 
 		public bool isEmpty() {

@@ -32,7 +32,7 @@ namespace BaroMod_sjx {
 				public float sprite_scale;
 				public float rotation;
 				public Color spriteColor;
-				public context(SpriteBatch sb, Inventory inv, Sprite full, Sprite empty,  Sprite? item, Rectangle area,int max, int cur, Vector2 sp, float ss, float rot, Color sc) {
+				public context(SpriteBatch sb, Inventory inv, Sprite? full, Sprite? empty,  Sprite? item, Rectangle area,int max, int cur, Vector2 sp, float ss, float rot, Color sc) {
 					spriteBatch = sb;
 					inventory = inv;
 					indicatorSprite = full;
