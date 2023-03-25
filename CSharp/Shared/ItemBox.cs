@@ -89,24 +89,30 @@ namespace BaroMod_sjx
 						target_slot = slots[storage_info.slotIndex];
 					}
 
-					if (!storage_info.isFull() && target_slot.Items.Any())
-					{
-						//bool edited = false;	
-						int preserve = SlotPreserveCount(target_slot.Items.First().Prefab, container, storage_info.slotIndex);
-						var it = target_slot.Items.ToArray().AsEnumerable().GetEnumerator();
-						while (it.MoveNext() && !storage_info.isFull())
+					if (target_slot.Items.Any()) {
+						storage_info.QualityStacked = target_slot.Items.First().Quality;
+						storage_info.ConditionStacked = target_slot.Items.First().Condition;
+						storage_info.item_type = target_slot.Items.First().Prefab;
+						if (!storage_info.isFull())
 						{
-							if (preserve > 0)
+
+							//bool edited = false;	
+							int preserve = SlotPreserveCount(target_slot.Items.First().Prefab, container, storage_info.slotIndex);
+							var it = target_slot.Items.ToArray().AsEnumerable().GetEnumerator();
+							while (it.MoveNext() && !storage_info.isFull())
 							{
-								preserve--;
-							}
-							else
-							{
-								//edited = true;
-								storage_info.currentItemCount++;
-								it.Current.ParentInventory = null;
-								__state.RemoveItem(it.Current);
-								Entity.Spawner.AddItemToRemoveQueue(it.Current);
+								if (preserve > 0)
+								{
+									preserve--;
+								}
+								else
+								{
+									//edited = true;
+									storage_info.currentItemCount++;
+									it.Current.ParentInventory = null;
+									__state.RemoveItem(it.Current);
+									Entity.Spawner.AddItemToRemoveQueue(it.Current);
+								}
 							}
 						}
 					}
@@ -171,19 +177,18 @@ namespace BaroMod_sjx
 					}
 					int preserve = SlotPreserveCount(__state.prefab, container, storage_info.slotIndex);
 					int spawn_count = preserve - target_slot.Items.Count;
-					bool edited = false;
-					while (!storage_info.isEmpty() && spawn_count > 0)
-					{
-						edited = true;
-						spawn_count--;
-						storage_info.currentItemCount--;
-						Item.Spawner.AddItemToSpawnQueue(__state.prefab, __state.inventory, __state.condition, __state.quality, spawnIfInventoryFull: false);
-					}
+					int can_spawn = Math.Min(spawn_count, storage_info.currentItemCount);
 
-					if (edited && GameMain.NetworkMember != null)
-					{
-						GameMain.NetworkMember.CreateEntityEvent(__state.inventory.Owner as Item,
-							new Item.ChangePropertyEventData(storage_info.SerializableProperties["currentItemCount"], storage_info));
+					storage_info.QualityStacked = __state.quality;
+					storage_info.ConditionStacked = __state.condition;
+					storage_info.item_type = __state.prefab;
+					storage_info.IsActive = true;
+
+					// other may be queued, so spawn only one
+					if (can_spawn > 0) {
+						--storage_info.currentItemCount;
+						Item.Spawner.AddItemToSpawnQueue(storage_info.item_type, storage_info.parentInventory,
+							storage_info.ConditionStacked, storage_info.QualityStacked, spawnIfInventoryFull: true);
 					}
 				}
 			}
@@ -219,8 +224,15 @@ namespace BaroMod_sjx
 
 		[Serialize(0, IsPropertySaveable.No, description: "Index of the stacking slot in same item's ItemContainer component")]
 		public int slotIndex { get; private set; }
+
+		[Serialize(true, IsPropertySaveable.No, description: "Shows count and percentage of stacking item")]
+		public bool showCount { get; private set; }
+
 		[Serialize(1024, IsPropertySaveable.No, description: "Maximum number of items stacked within")]
 		public int maxItemCount { get; private set; }
+
+		[Serialize(true, IsPropertySaveable.No, description: "Shows icon of stacking item")]
+		public bool showIcon { get; private set; }
 
 		[Serialize(0.6f, IsPropertySaveable.No, description: "icon scale compared to full")]
 		public float iconScale { get; private set; }
@@ -234,11 +246,53 @@ namespace BaroMod_sjx
 		[Editable(minValue:0, maxValue: int.MaxValue), Serialize(0, IsPropertySaveable.Yes, description: "Current item count")]
 		public int currentItemCount { get; set; }
 
-		public ConditionStorage(Item item, ContentXElement element) : base(item, element){}
+		[Editable, Serialize("", IsPropertySaveable.Yes, description: "current stacked item")]
+		public Identifier ItemIdentifier {
+			get { 
+				return item_type?.Identifier??"";
+			}
+			set {
+				if (value.IsEmpty)
+				{
+					item_type = null;
+				}
+				else {
+					item_type = ItemPrefab.Find("", value.ToIdentifier());
+				}
+			}
+		}
+
+		public ItemPrefab? item_type;
+
+		[Editable(MinValueInt = 0, MaxValueInt = Quality.MaxQuality), Serialize(0, IsPropertySaveable.Yes, description: "current stacked item quality")]
+		public int QualityStacked { get; set; }
+
+		[Editable, Serialize(float.NaN, IsPropertySaveable.Yes, description: "current stacked item condition")]
+		public float ConditionStacked { get; set; }
+
+		public ItemInventory parentInventory { 
+			get {
+				return Item.OwnInventory;
+			}
+		}
+
+		public ConditionStorage(Item item, ContentXElement element) : base(item, element) {}
 
 		public bool isFull() {
-			
 			return currentItemCount >= maxItemCount;
+		}
+
+		public override void Update(float deltaTime, Camera cam) {
+			base.Update(deltaTime, cam);
+
+			IsActive = false;
+
+			// update enitity property
+			if (GameMain.NetworkMember != null)
+			{
+				GameMain.NetworkMember.CreateEntityEvent(Item,
+					new Item.ChangePropertyEventData(SerializableProperties["currentItemCount"], this));
+			}
 		}
 
 		public bool isEmpty() {
