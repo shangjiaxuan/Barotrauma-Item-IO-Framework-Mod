@@ -183,7 +183,7 @@ namespace BaroMod_sjx {
 						rotation = 0.0f;
 						spriteColor = Color.White;
 					}
-					Vector2 center = slot.Rect.Center.ToVector2() + (new Vector2(conditionStorage.iconShiftX, conditionStorage.iconShiftY))*slot.Rect.Size.ToVector2()*0.5f;
+					Vector2 center = rect.Center.ToVector2() + (new Vector2(conditionStorage.iconShiftX, conditionStorage.iconShiftY))*slot.Rect.Size.ToVector2()*0.5f;
 					__state = new context(spriteBatch, inventory, indicatorSprite, emptyIndicatorSprite, item_sprite,
 						conditionIndicatorArea, conditionStorage.maxItemCount, conditionStorage.currentItemCount, center, 
 							scale*conditionStorage.iconScale, rotation, spriteColor);

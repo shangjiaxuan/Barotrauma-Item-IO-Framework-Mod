@@ -105,7 +105,7 @@ namespace BaroMod_sjx
 								{
 									preserve--;
 								}
-								else {
+								else if(Entity.Spawner != null) {
 									// client cannot despawn items, single player needs to despawn
 									Entity.Spawner.AddItemToRemoveQueue(it.Current);
 									++storage_info.currentItemCount;
@@ -124,22 +124,6 @@ namespace BaroMod_sjx
 		[HarmonyPatch(typeof(Inventory), nameof(Inventory.RemoveItem))]
 		class Patch_RemoveItem
 		{
-			public class context
-			{
-				public Inventory inventory;
-				public float condition;
-				public int quality;
-				public ItemPrefab prefab;
-				public ConditionStorage info;
-				public context(Inventory inv, float cond, int q, ItemPrefab p, ConditionStorage sto)
-				{
-					inventory = inv;
-					condition = cond;
-					quality = q;
-					prefab = p;
-					info = sto;
-				}
-			};
 			public static bool Prefix(Inventory __instance, out ConditionStorage? __state, Item item)
 			{
 
@@ -191,10 +175,12 @@ namespace BaroMod_sjx
 
 					// other may be queued, so spawn only one
 					if (can_spawn > 0) {
-						storage_info.SetSync();
-						--storage_info.currentItemCount;
-						Item.Spawner.AddItemToSpawnQueue(storage_info.item_type, storage_info.parentInventory,
-								storage_info.ConditionStacked, storage_info.QualityStacked, spawnIfInventoryFull: true);
+						if (Entity.Spawner != null) {
+							storage_info.SetSync();
+							--storage_info.currentItemCount;
+							Item.Spawner.AddItemToSpawnQueue(storage_info.item_type, storage_info.parentInventory,
+									storage_info.ConditionStacked, storage_info.QualityStacked, spawnIfInventoryFull: true);
+						}
 					}
 				}
 			}
