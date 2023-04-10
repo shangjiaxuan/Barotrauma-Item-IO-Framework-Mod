@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System;
 using System.ComponentModel;
 using Barotrauma.Networking;
+using System.Linq;
 
 namespace BaroMod_sjx {
 	partial class ItemBoxImpl
@@ -212,7 +213,56 @@ namespace BaroMod_sjx {
 		private int? last_server_update_count = null;
 		private float resetPredictionTimer = 1.0f;
 
-		partial void OnCountChanged()
+		float last_update_time = 0;
+
+		const double remove_time = 1.0;
+
+		class ItemStackedInfo {
+			public Item target;
+			public Inventory removed_from;
+			public Character user;
+			public double timestamp;
+			public int slot;
+			public ItemStackedInfo(Item item, Character character, Inventory removedFrom, int from_slot) {
+				target = item;
+				removed_from = removedFrom;
+				user = character;
+				slot = from_slot;
+				timestamp = Timing.TotalTime;
+			}
+		}
+
+		// keep a list of items removed on client side so that they can be put back into container after timeour
+		private List<ItemStackedInfo> removed = new List<ItemStackedInfo>();
+
+
+		void RemoveItem_track(Item item, Character user, Inventory removedFrom, int slot) {
+			removed.Add(new ItemStackedInfo(item, user, removedFrom, slot));
+		}
+
+		void UpdateRemovedItems() {
+			var copy = removed.CreateCopy();
+			foreach (var item in copy)
+			{
+				// updated from server to be removed
+				if (item.target.Removed)
+				{
+					removed.Remove(item);
+				}
+				// timeout for removed item. put it back.
+				else if (Timing.TotalTime - item.timestamp > remove_time) {
+					if (!item.removed_from.TryPutItem(item.target, item.slot, false, false, item.user, false, false)) { 
+						item.target.Drop(item.user, true, true);
+					}
+					removed.Remove(item);
+				}
+			}
+			if (removed.Any()) {
+				IsActive = true;
+			}
+		}
+
+		partial void OnCountPredictionChanged()
 		{
 			if (GameMain.Client == null || !last_server_update_count.HasValue) { return; }
 			if (resetPredictionCoroutine == null || !CoroutineManager.IsCoroutineRunning(resetPredictionCoroutine))
@@ -228,15 +278,18 @@ namespace BaroMod_sjx {
 				resetPredictionTimer -= CoroutineManager.DeltaTime;
 				yield return CoroutineStatus.Running;
 			}
-			if (last_server_update_count.HasValue) { _currentItemCount = last_server_update_count.Value; }
+			if (last_server_update_count.HasValue) { SetItemCount(last_server_update_count.Value, false); }
 			resetPredictionCoroutine = null;
 			yield return CoroutineStatus.Success;
 		}
 
 		public void ClientEventRead(IReadMessage msg, float sendingTime)
 		{
-			last_server_update_count = msg.ReadInt32();
-			_currentItemCount = (int)last_server_update_count;
+			if (last_update_time <= sendingTime) { 
+				last_update_time = sendingTime;
+				last_server_update_count = msg.ReadRangedInteger(0, maxItemCount);
+				SetItemCount(last_server_update_count.Value, true);
+			}
 		}
 	}
 }

@@ -17,7 +17,7 @@ namespace BaroMod_sjx {
 		private int lastSentState;
 		private float sendStateTimer;
 		*/
-		partial void OnCountChanged()
+		partial void OnCountPredictionChanged()
 		{
 			/*
 			sendStateTimer = 0.5f;
@@ -46,9 +46,9 @@ namespace BaroMod_sjx {
 			yield return CoroutineStatus.Success;
 		}*/
 
-		public void ServerEventWrite(IWriteMessage msg, Client c, NetEntityEvent.IData? extraData = null)
-		{
-			msg.WriteInt32(currentItemCount);
+		public void ServerEventWrite(IWriteMessage msg, Client c, NetEntityEvent.IData? extraData = null){
+			EventData eventData = ExtractEventData<EventData>(extraData);
+			msg.WriteRangedInteger(eventData.ItemCount, 0, maxItemCount);
 		}
 	}
 }
