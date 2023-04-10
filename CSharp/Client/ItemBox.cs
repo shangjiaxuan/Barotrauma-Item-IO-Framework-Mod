@@ -6,14 +6,11 @@ using Microsoft.Xna.Framework.Graphics;
 using System.Collections.Generic;
 using System;
 using System.ComponentModel;
+using Barotrauma.Networking;
 
 namespace BaroMod_sjx {
-	partial class ItemBoxClient
+	partial class ItemBoxImpl
 	{
-		static Dictionary<Type, ItemComponent> get_componentsByType(Item item)
-		{
-			return (AccessTools.Field(typeof(Item), "componentsByType").GetValue(item)! as Dictionary<Type, ItemComponent>)!;
-		}
 
 		[HarmonyPatch(typeof(Inventory), nameof(Inventory.DrawSlot))]
 		class Patch_DrawSlot {
@@ -206,6 +203,40 @@ namespace BaroMod_sjx {
 					}
 				}
 			}
+		}
+	}
+
+	partial class ConditionStorage : ItemComponent, IServerSerializable
+	{
+		private CoroutineHandle? resetPredictionCoroutine = null;
+		private int? last_server_update_count = null;
+		private float resetPredictionTimer = 1.0f;
+
+		partial void OnCountChanged()
+		{
+			if (GameMain.Client == null || !last_server_update_count.HasValue) { return; }
+			if (resetPredictionCoroutine == null || !CoroutineManager.IsCoroutineRunning(resetPredictionCoroutine))
+			{
+				resetPredictionCoroutine = CoroutineManager.StartCoroutine(ResetPredictionAfterDelay());
+			}
+		}
+
+		private IEnumerable<CoroutineStatus> ResetPredictionAfterDelay()
+		{
+			while (resetPredictionTimer > 0.0f)
+			{
+				resetPredictionTimer -= CoroutineManager.DeltaTime;
+				yield return CoroutineStatus.Running;
+			}
+			if (last_server_update_count.HasValue) { _currentItemCount = last_server_update_count.Value; }
+			resetPredictionCoroutine = null;
+			yield return CoroutineStatus.Success;
+		}
+
+		public void ClientEventRead(IReadMessage msg, float sendingTime)
+		{
+			last_server_update_count = msg.ReadInt32();
+			_currentItemCount = (int)last_server_update_count;
 		}
 	}
 }

@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System;
 using Microsoft.Xna.Framework;
 using System.ComponentModel;
+using Barotrauma.Networking;
 
 namespace BaroMod_sjx
 {
@@ -57,15 +58,10 @@ namespace BaroMod_sjx
 
 			public static bool Prefix(Inventory __instance, out Inventory? __state, int i)
 			{
-				if (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? component))
+				if (__instance.Owner is Item parentItem 
+					&& get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? component))
 				{
-					if (__instance.AllowSwappingContainedItems) {
-						DebugConsole.LogError($"ItemContainer of {(__instance.Owner as Item)!.Prefab.Identifier} with ConditionStorage must have AllowSwappingContainedItems=\"false\"!");
-						__state = null;
-					}
-					else {
-						__state = __instance;
-					}
+					__state = __instance;
 				}
 				else {
 					__state = null;
@@ -110,7 +106,7 @@ namespace BaroMod_sjx
 									Entity.Spawner.AddItemToRemoveQueue(it.Current);
 									++storage_info.currentItemCount;
 									storage_info.SetSync();
-									it.Current.ParentInventory = null;
+									storage_info.flag_remove_no_spawn = true;
 									__state.RemoveItem(it.Current);
 									break;
 								}
@@ -128,17 +124,16 @@ namespace BaroMod_sjx
 			{
 
 				// do not add items if sub is unloading or if removed for overflow.
-				if ((item.ParentInventory != null) && !Submarine.Unloading  && (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? comp)))
+				if ((item.ParentInventory != null) && !Submarine.Unloading  
+					&& (__instance.Owner is Item parentItem && get_componentsByType(parentItem).TryGetValue(typeof(ConditionStorage), out ItemComponent? comp)))
 				{
-					if (__instance.AllowSwappingContainedItems)
+					ConditionStorage storage_info = (comp as ConditionStorage)!;
+					if (storage_info.flag_remove_no_spawn)
 					{
-						DebugConsole.LogError($"ItemContainer of {(__instance.Owner as Item)!.Prefab.Identifier} with ConditionStorage must have AllowSwappingContainedItems=\"false\"!");
+						storage_info.flag_remove_no_spawn = false;
 						__state = null;
 					}
-					else
-					{
-						ConditionStorage storage_info = (comp as ConditionStorage)!;
-
+					else {
 						storage_info.QualityStacked = item.Quality;
 						storage_info.ConditionStacked = item.Condition;
 						storage_info.item_type = item.Prefab;
@@ -147,9 +142,6 @@ namespace BaroMod_sjx
 				}
 				else {
 					__state = null;
-				}
-				if (item.ParentInventory is null) {
-					item.ParentInventory = __instance;
 				}
 				return true;
 			}
@@ -169,6 +161,7 @@ namespace BaroMod_sjx
 						}
 						target_slot = slots[storage_info.slotIndex];
 					}
+				
 					int preserve = SlotPreserveCount(storage_info.item_type!, container, storage_info.slotIndex);
 					int spawn_count = preserve - target_slot.Items.Count;
 					int can_spawn = Math.Min(spawn_count, storage_info.currentItemCount);
@@ -178,6 +171,7 @@ namespace BaroMod_sjx
 						if (Entity.Spawner != null) {
 							storage_info.SetSync();
 							--storage_info.currentItemCount;
+
 							Item.Spawner.AddItemToSpawnQueue(storage_info.item_type, storage_info.parentInventory,
 									storage_info.ConditionStacked, storage_info.QualityStacked, spawnIfInventoryFull: true);
 						}
@@ -185,7 +179,26 @@ namespace BaroMod_sjx
 				}
 			}
 		}
-		
+
+		[HarmonyPatch(typeof(Inventory))]
+		class Patch_TrySwapping {
+			static MethodBase TargetMethod()
+			{
+				return AccessTools.Method(typeof(Inventory), "TrySwapping");
+			}
+
+			public static bool Prefix(Inventory __instance, Item item, ref bool __result)
+			{
+				if ((__instance.Owner is Item parent && parent.GetComponent<ConditionStorage>() != null) 
+					|| (item?.ParentInventory?.Owner is Item other_parent && other_parent.GetComponent<ConditionStorage>() != null))
+				{
+					__result = false;
+					return false;
+				}
+				return true;
+			}
+		}
+
 		[HarmonyPatch(typeof(Inventory), nameof(Inventory.CreateNetworkEvent))]
 		class Patch_CreateNetworkEvent
 		{
@@ -212,7 +225,8 @@ namespace BaroMod_sjx
 		}
 	}
 	
-	class ConditionStorage : ItemComponent {
+	partial class ConditionStorage : ItemComponent
+	{
 
 		[Serialize(0, IsPropertySaveable.No, description: "Index of the stacking slot in same item's ItemContainer component")]
 		public int slotIndex { get; private set; }
@@ -236,7 +250,23 @@ namespace BaroMod_sjx
 		public float iconShiftY { get; private set; }
 
 		[Editable(minValue:0, maxValue: int.MaxValue), Serialize(0, IsPropertySaveable.Yes, description: "Current item count")]
-		public int currentItemCount { get; set; }
+		// camel case needed for save compatibility
+		public int currentItemCount { 
+			get => _currentItemCount;
+			// assume set by 
+			set {
+				OnCountChanged();
+				IsActive = true;
+				_currentItemCount = value;
+			}
+		}
+
+		public int _currentItemCount;
+
+		// replace setting parent container hack, so that harpoon guns work correctly
+		public bool flag_remove_no_spawn;
+		partial void OnCountChanged();
+
 
 		[Editable, Serialize("", IsPropertySaveable.Yes, description: "current stacked item")]
 		public Identifier ItemIdentifier {
@@ -279,254 +309,19 @@ namespace BaroMod_sjx
 		}
 
 		public void SyncItemCount() {
-			if (GameMain.NetworkMember != null && GameMain.NetworkMember.IsServer)
-			{
-				GameMain.NetworkMember.CreateEntityEvent(Item,
-					new Item.ChangePropertyEventData(SerializableProperties["currentItemCount"], this));
-			}
+#if SERVER
+			Item.CreateServerEvent(this);
+#endif
 		}
 
 		public override void Update(float deltaTime, Camera cam) {
 			base.Update(deltaTime, cam);
-
-			IsActive = false;
-
 			SyncItemCount();
+			IsActive = false;
 		}
 
 		public bool isEmpty() {
 			return currentItemCount <= 0;
 		}
 	}
-	/*
-static void Prepare_All_Types()
-{
-InventoryWrapper.Prepare();
-ItemWrapper.Prepare();
-ItemEnumerableBinding.Prepare();
-ItemEnumeratorBinding.Prepare();
-EntitySpawnerBinding.Prepare();
-}
-
-class InventoryWrapper
-{
-public static Type? InventoryType = null;
-public static MethodInfo? Inventory_PutItem = null;
-public static MethodInfo? Inventory_RemoveItem = null;
-public static MethodInfo? Inventory_IsEmpty = null;
-public static PropertyInfo? Inventory_AllItemsMod = null;
-public static FieldInfo? Inventory_Owner = null;
-public static void Prepare()
-{
-	InventoryType = AccessTools.TypeByName("Barotrauma.Inventory");
-	Inventory_PutItem = InventoryType.GetMethod("PutItem");
-	Inventory_RemoveItem = InventoryType.GetMethod("RemoveItem");
-	Inventory_IsEmpty = InventoryType.GetMethod("IsEmpty");
-	Inventory_AllItemsMod = InventoryType.GetProperty("AllItemsMod");
-	Inventory_Owner = InventoryType!.GetField("Owner");
-}
-}
-
-class ItemWrapper
-{
-public static Type? ItemType = null;
-public static PropertyInfo? Item_ContainerIdentifier = null;
-public static PropertyInfo? Item_IsFullCondition = null;
-public static PropertyInfo? Item_Condition = null;
-public static PropertyInfo? Item_Quality = null;
-public static PropertyInfo? Item_Prefab = null;
-public static PropertyInfo? Item_ParentInventory = null;
-
-public static FieldInfo? Item_Spawner = null;
-
-public static void Prepare()
-{
-	ItemType = AccessTools.TypeByName("Barotrauma.Item");
-	Item_ContainerIdentifier = ItemType.GetProperty("ContainerIdentifier")!;
-	Item_IsFullCondition = ItemType.GetProperty("IsFullCondition")!;
-	Item_Condition = ItemType.GetProperty("Condition")!;
-	Item_Quality = ItemType.GetProperty("Quality")!;
-	Item_Prefab = ItemType.GetProperty("Prefab")!;
-	Item_ParentInventory = ItemType.GetProperty("ParentInventory")!;
-	Item_Spawner = ItemType.GetField("Spawner")!;
-}
-}
-
-class ItemEnumerableBinding
-{
-public static Type? ItemEnumerableType = null;
-public static MethodInfo? ItemEnumerable_GetEnumerator = null;
-public static void Prepare()
-{
-	ItemEnumerableType = AccessTools.TypeByName("System.Collections.IEnumerable<Barotrauma.Item>");
-	ItemEnumerable_GetEnumerator = ItemEnumerableType.GetMethod("GetEnumerator")!;
-}
-}
-
-class ItemEnumeratorBinding
-{
-public static Type? ItemEnumeratorType = null;
-public static MethodInfo? ItemEnumerator_MoveNext = null;
-public static PropertyInfo? ItemEnumerator_Current = null;
-public static void Prepare()
-{
-	ItemEnumeratorType = AccessTools.TypeByName("System.Collections.IEnumerator<Barotrauma.Item>");
-	ItemEnumerator_MoveNext = ItemEnumeratorType.GetMethod("MoveNext")!;
-	ItemEnumerator_Current = ItemEnumeratorType.GetProperty("Current")!;
-}
-}
-
-class EntitySpawnerBinding
-{
-public static Type? EntitySpawnerType = null;
-public static MethodInfo? EntitySpawner_AddItemToSpawnQueue_Inventory = null;
-public static void Prepare()
-{
-	EntitySpawnerType = AccessTools.TypeByName("Barotrauma.EntitySpawner");
-	EntitySpawner_AddItemToSpawnQueue_Inventory = EntitySpawnerType.GetMethod("AddItemToSpawnQueue",
-		new Type[] { AccessTools.TypeByName("Barotrauma.EntitySpawner") , InventoryWrapper.InventoryType!,
-			typeof(float?), typeof(int?), AccessTools.TypeByName("System.Action<Barotrauma.Item>"), typeof(bool),
-			typeof(bool), typeof(InvSlotType)});
-}
-}
-
-private static bool EntityIsItem(object entity)
-{
-return entity.GetType() == ItemWrapper.ItemType;
-}
-private static Identifier GetParentIdentifier(object item)
-{
-return (Identifier)ItemWrapper.Item_ContainerIdentifier!.GetValue(item)!;
-}
-
-private static void increment_condition(object parentItem, float increment)
-{
-float current = (float)ItemWrapper.Item_Condition!.GetValue(parentItem)!;
-current += increment;
-ItemWrapper.Item_Condition!.SetValue(parentItem, current);
-}
-
-private static float get_condition(object parentItem)
-{
-return (float)ItemWrapper.Item_Condition!.GetValue(parentItem)!;
-}
-
-
-[HarmonyPatch]
-class Patch_PutItem
-{
-static void Prepare() {
-	ItemBoxImpl.Prepare_All_Types();
-}
-static MethodBase TargetMethod() {
-	return InventoryWrapper.Inventory_PutItem!;
-}
-
-public static bool Prefix(object __instance, object __state)
-{
-	__state = __instance;
-	return true;
-}
-
-private static bool IsFullCondition(object item) {
-	return (bool)ItemWrapper.Item_IsFullCondition!.GetValue(item)!;
-}
-
-private static object AllItemsModEnumerator(object inventory) {
-	return ItemEnumerableBinding.ItemEnumerable_GetEnumerator!.Invoke(InventoryWrapper.Inventory_AllItemsMod!.GetValue(inventory)!, null)!;
-}
-private static bool ItemEnumeratorMoveNext(object it) {
-	return (bool)ItemEnumeratorBinding.ItemEnumerator_MoveNext!.Invoke(it, null)!;
-}
-
-private static object ItemEnumeratorCurrent(object it)
-{
-	return ItemEnumeratorBinding.ItemEnumerator_Current!.GetValue(it)!;
-}
-
-private static void RemoveFromInventory(object inventory, object item) {
-	InventoryWrapper.Inventory_RemoveItem!.Invoke(inventory, new object[] { item });
-}
-
-public static void Postfix(object __state)
-{
-	object parentEntity = InventoryWrapper.Inventory_Owner!.GetValue(__state)!;
-	if (EntityIsItem(parentEntity) && GetParentIdentifier(parentEntity) == box_identifier)
-	{
-		if (!IsFullCondition(parentEntity))
-		{
-			var it = AllItemsModEnumerator(__state);
-			// skip first
-			if (ItemEnumeratorMoveNext(it))
-			{
-				while (ItemEnumeratorMoveNext(it) && !IsFullCondition(parentEntity))
-				{
-					increment_condition(parentEntity, increment);
-					RemoveFromInventory(__state, ItemEnumeratorCurrent(it));
-				}
-			}
-		}
-	}
-}
-}
-
-[HarmonyPatch]
-class Patch_RemoveItem {
-static void Prepare()
-{
-	ItemBoxImpl.Prepare_All_Types();
-}
-
-static MethodBase TargetMethod()
-{
-	return InventoryWrapper.Inventory_RemoveItem!;
-}
-
-public class context
-{
-	public object inventory;
-	public bool do_dump;
-	public float? condition;
-	public int? quality;
-	public object prefab;
-	public context(object inv, object it)
-	{
-		inventory = inv;
-		do_dump = ItemWrapper.Item_ParentInventory!.GetValue(it) != null;
-		condition = ItemWrapper.Item_Condition!.GetValue(it) as float?;
-		quality = ItemWrapper.Item_Quality!.GetValue(it) as int?;
-		prefab = ItemWrapper.Item_Prefab!.GetValue(it)!;
-	}
-};
-
-public static bool Prefix(object __instance, context __state, object item)
-{
-	__state = new context(__instance, item);
-	return true;
-}
-
-
-private static bool InventoryIsEmpty(object inv) {
-	return (bool)InventoryWrapper.Inventory_IsEmpty!.Invoke(inv, null)!;
-}
-
-private static void spawnItemInInventory(object prefab, object inventory, float? condition, int? quality) {
-	object spawner = ItemWrapper.Item_Spawner!.GetValue(null)!;
-	EntitySpawnerBinding.EntitySpawner_AddItemToSpawnQueue_Inventory!.Invoke(spawner,
-		new object?[] { prefab , inventory, condition, quality, null, false, false, InvSlotType.None});
-}
-
-public static void Postfix(context __state) {
-	if (__state.do_dump) {
-		object parentEntity = InventoryWrapper.Inventory_Owner!.GetValue(__state.inventory)!;
-		if (EntityIsItem(parentEntity) && GetParentIdentifier(parentEntity) == box_identifier) {
-			if (get_condition(parentEntity)>=increment && InventoryIsEmpty(__state.inventory)) {
-				increment_condition(parentEntity, -increment);
-				spawnItemInInventory(__state.prefab, __state.inventory, __state.condition, __state.quality);
-			}
-		}
-	}
-}
-}
-*/
 }
