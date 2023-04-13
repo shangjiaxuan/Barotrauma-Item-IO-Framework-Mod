@@ -285,10 +285,15 @@ namespace BaroMod_sjx {
 
 		public void ClientEventRead(IReadMessage msg, float sendingTime)
 		{
-			if (last_update_time <= sendingTime) { 
+			if (last_update_time <= sendingTime)
+			{
 				last_update_time = sendingTime;
 				last_server_update_count = msg.ReadRangedInteger(0, maxItemCount);
 				SetItemCount(last_server_update_count.Value, true);
+			}
+			else {
+				// discard the number, but still extract it from stream.
+				msg.ReadRangedInteger(0, maxItemCount);
 			}
 		}
 	}
