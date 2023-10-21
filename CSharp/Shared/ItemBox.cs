@@ -130,9 +130,14 @@ namespace BaroMod_sjx
 			}
 		}
 
-		[HarmonyPatch(typeof(Inventory), nameof(Inventory.CreateNetworkEvent))]
+		[HarmonyPatch(typeof(Inventory))]
 		class Patch_CreateNetworkEvent
 		{
+                        static MethodBase TargetMethod()
+                        {
+                                return AccessTools.Method(typeof(Inventory), "CreateNetworkEvent");
+                        }
+
 			public static bool Prefix(Inventory __instance, out ConditionStorage? __state) {
 				__state = null;
 				if (GameMain.NetworkMember != null)
@@ -272,7 +277,7 @@ namespace BaroMod_sjx
 
 		public static int SlotPreserveCount(ItemPrefab prefab, ItemContainer container, int slot_index)
 		{
-			int resolved_stack_size = Math.Min(Math.Min(prefab.MaxStackSize, container.GetMaxStackSize(slot_index)), Inventory.MaxStackSize);
+			int resolved_stack_size = Math.Min(Math.Min(prefab.MaxStackSize, container.GetMaxStackSize(slot_index)), Inventory.MaxPossibleStackSize);
 			if (resolved_stack_size <= 1)
 			{
 				return 1;
