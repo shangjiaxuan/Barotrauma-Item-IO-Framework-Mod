@@ -9,9 +9,11 @@ using Microsoft.Xna.Framework;
 using System.ComponentModel;
 using Barotrauma.Networking;
 
-namespace BaroMod_sjx {
+namespace BaroMod_sjx
+{
 
-	partial class ConditionStorage : ItemComponent, IServerSerializable {
+	partial class ConditionStorage : ItemComponent, IServerSerializable
+	{
 		/*
 		private CoroutineHandle? sendStateCoroutine;
 		private int lastSentState;
@@ -46,7 +48,8 @@ namespace BaroMod_sjx {
 			yield return CoroutineStatus.Success;
 		}*/
 
-		public void ServerEventWrite(IWriteMessage msg, Client c, NetEntityEvent.IData? extraData = null){
+		public void ServerEventWrite(IWriteMessage msg, Client c, NetEntityEvent.IData? extraData = null)
+		{
 			EventData eventData = ExtractEventData<EventData>(extraData);
 			msg.WriteRangedInteger(eventData.ItemCount, 0, maxItemCount);
 		}

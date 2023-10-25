@@ -1,5 +1,5 @@
 <Item identifier="StackBox" category="Equipment" 
-    tags="smallitem,mobilecontainer,tool" 
+    tags="smallitem,io_box,tool" 
     health="1" scale="0.5" impactsoundtag="impact_metal_heavy" 
     showcontentsintooltip="true" canflipx="false" waterproof="true" fireproof="true"
     Indestructible="true" >
