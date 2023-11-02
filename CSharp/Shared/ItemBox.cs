@@ -295,9 +295,9 @@ namespace BaroMod_sjx
 			IsActive = false;
 		}
 
-		public static int SlotPreserveCount(ItemPrefab prefab, ItemContainer container, int slot_index)
+		public static int SlotPreserveCount(ItemPrefab prefab, Inventory inventory, ItemContainer container, int slot_index)
 		{
-			int resolved_stack_size = Math.Min(Math.Min(prefab.MaxStackSize, container.GetMaxStackSize(slot_index)), Inventory.MaxPossibleStackSize);
+			int resolved_stack_size = Math.Min(Math.Min(prefab.GetMaxStackSize(inventory), container.GetMaxStackSize(slot_index)), Inventory.MaxPossibleStackSize);
 			if (resolved_stack_size <= 1)
 			{
 				return 1;
@@ -353,7 +353,7 @@ namespace BaroMod_sjx
 				if (!IsFull)
 				{
 					//bool edited = false;	
-					int preserve = SlotPreserveCount(target_slot.Items.First().Prefab, container, slotIndex);
+					int preserve = SlotPreserveCount(target_slot.Items.First().Prefab, itemInventory, container, slotIndex);
 					var it = target_slot.Items.ToArray().AsEnumerable().GetEnumerator();
 					while (it.MoveNext() && !IsFull)
 					{
@@ -388,7 +388,7 @@ namespace BaroMod_sjx
 				target_slot = slots[slotIndex];
 			}
 
-			int preserve = SlotPreserveCount(item_type!, itemContainer, slotIndex);
+			int preserve = SlotPreserveCount(item_type!, itemInventory, itemContainer, slotIndex);
 			int spawn_count = preserve - target_slot.Items.Count;
 			int can_spawn = Math.Min(spawn_count, currentItemCount);
 
