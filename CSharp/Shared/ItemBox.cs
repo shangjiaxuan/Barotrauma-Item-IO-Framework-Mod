@@ -31,7 +31,7 @@ namespace BaroMod_sjx
 
 		public override void Stop()
 		{
-			harmony.UnpatchAll(harmony_id);
+			harmony.UnpatchSelf();
 		}
 
 
