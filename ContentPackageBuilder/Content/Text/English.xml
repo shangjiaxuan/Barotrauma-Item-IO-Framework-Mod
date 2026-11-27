@@ -1,5 +1,6 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <infotexts language="English" nowhitespace="false" translatedname="English">
   <entityname.StackBox>Item Box</entityname.StackBox>
   <entitydescription.StackBox>Stack your stackable items in one entity.</entitydescription.StackBox>
+  <stackbox.stackedcount>Stacked items: {0}/{1}</stackbox.stackedcount>
 </infotexts>

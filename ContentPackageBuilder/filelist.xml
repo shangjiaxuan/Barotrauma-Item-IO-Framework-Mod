@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<contentpackage name="Item IO Framework" modversion="1.0.0" corepackage="False" steamworkshopid="2950383008" gameversion="1.15.33.2">
+  <PluginInfo file="%ModDir%/PluginInfo.xml" />
+  <Item file="%ModDir%/Content/ItemBox.xml" />
+  <Text file="%ModDir%/Content/Text/English.xml" />
+  <Text file="%ModDir%/Content/Text/SimplifiedChinese.xml" />
+</contentpackage>
